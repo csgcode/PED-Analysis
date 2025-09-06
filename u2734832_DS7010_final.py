@@ -14,7 +14,7 @@
 # ==============================================================================
 
 print("--- Installing required libraries ---")
-# !pip install pandas numpy statsmodels scikit-learn xgboost matplotlib seaborn -q
+# !pip install pandas numpy statsmodels scikit-learn xgboost matplotlib seaborn joblib -q
 print("Libraries installed successfully.")
 
 import pandas as pd
@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import warnings
+import joblib
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -43,19 +44,30 @@ PRODUCT_COSTS = {
     'REGENCY CAKESTAND 3 TIER': 5.50,
     'JUMBO BAG RED RETROSPOT': 0.75
 }
-OUTPUT_DIR = 'outputs'
-FILE_PATH = "ENTER_FILE_PATH_LOCATION"
+# --- IMPORTANT: UPDATE THIS PATH ---
+FILE_PATH = "online_retail_II_kaggle.csv" #
+
+# Define output directories for models and plots
+MODEL_DIR = 'saved_models'
+OUTPUT_DIR = 'tmp/outputs'
+
+SAVE_MODEL = True
+
+if not os.path.exists(MODEL_DIR):
+    os.makedirs(MODEL_DIR)
+    print(f"Created directory: {MODEL_DIR}")
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
     print(f"Created directory: {OUTPUT_DIR}")
 
+
 # --- Data Loading and Full Preparation Pipeline ---
 print("\n--- Starting Data Preparation Pipeline ---")
 try:
-    raw_df = pd.read_csv(FILE_PATH)
+    raw_df = pd.read_csv(FILE_PATH, encoding='cp1252') # Added encoding for compatibility
     print("Dataset loaded successfully.")
 except FileNotFoundError:
-    print(f"ERROR: '{FILE_PATH}' file not found. Please upload the file.")
+    print(f"ERROR: '{FILE_PATH}' file not found. Please update the FILE_PATH variable in the script.")
     exit()
 
 # Cleaning
@@ -109,6 +121,15 @@ final_df.dropna(inplace=True)
 print("Data preparation complete.")
 print("-" * 60)
 
+# --- Helper Function for Saving Models ---
+def save_model_joblib(model_object, product_name, model_prefix):
+    """Saves a model object to a file using joblib."""
+    safe_product_name = "".join(c for c in product_name if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
+    model_filename = os.path.join(MODEL_DIR, f'{model_prefix}_{safe_product_name}.joblib')
+    joblib.dump(model_object, model_filename)
+    print(f"\n   >>> Model for '{product_name}' saved successfully to: {model_filename} <<<")
+
+
 def plot_eda(data, product_name):
     print(f"\n--- Generating EDA Plots for: {product_name} ---")
     data['Date'] = pd.to_datetime(data['Year'].astype(str) + data['Week_of_Year'].astype(str) + '1', format='%Y%W%w')
@@ -161,8 +182,7 @@ def plot_advanced_eda(data, product_name):
 
 def run_correlation_analysis(data, product_name):
     """
-    Calculates and plots a correlation matrix for the features. Includes
-    both Pearson (linear) and Spearman (monotonic) correlations.
+    Calculates and plots a correlation matrix for the features.
     """
     print(f"\n--- Performing Correlation Analysis for: {product_name} ---")
 
@@ -200,11 +220,7 @@ def plot_model_diagnostics(model, product_name):
     print(f"   - OLS diagnostic plots saved to {plot_filename}")
 
 
-def run_elasticity_model(data, product_name):
-    """
-    Runs the Log-Log regression, prints key metrics including both R-squared
-    and Adjusted R-squared, and generates diagnostic plots.
-    """
+def run_elasticity_model(data, product_name, save_model=False):
     print("\n--- Model 1: Log-Log Regression (Explanatory) ---")
     log_data = data.copy()
     log_data['log_Quantity'] = np.log1p(log_data['Quantity'])
@@ -225,60 +241,71 @@ def run_elasticity_model(data, product_name):
 
     plot_model_diagnostics(model, product_name)
 
+    if save_model:
+        save_model_joblib(model, product_name, 'log_log_model')
+
     return model
 
 
-def tune_and_run_random_forest(product_data, product_name):
-    print(f"\n--- Model 2: Tuned Random Forest Regressor (Predictive) ---")
+def tune_and_run_random_forest(product_data, product_name, save_model=False):
+    """
+    This function now only trains and tunes the RF model, returning the best one.
+    """
+    print(f"\n--- Model: Tuning Random Forest Regressor for {product_name} ---")
     features = ['Weekly_Avg_Price', 'Month', 'Week_of_Year', 'Quantity_Last_Week', 'Quantity_4_Week_MA', 'Is_Holiday_Season']
     X = product_data[features]
     y = product_data['Quantity']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    param_grid = {'n_estimators': [100, 200], 'max_depth': [5, 10, None], 'min_samples_leaf': [1, 2, 4], 'min_samples_split': [2, 5]}
+
+    # We train on the full dataset for the final model to be deployed
+    X_train, y_train = X, y
+
+    # A more focused parameter grid for faster tuning
+    param_grid = {
+        'n_estimators': [100, 200],
+        'max_depth': [5, 10, 15],
+        'min_samples_leaf': [1, 2, 4],
+        'min_samples_split': [2, 5]
+    }
     rf = RandomForestRegressor(random_state=42)
     grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, n_jobs=-1, verbose=0, scoring='r2')
     grid_search.fit(X_train, y_train)
-    print(f"   - Best parameters found: {grid_search.best_params_}")
-    best_rf_model = grid_search.best_estimator_
-    y_pred = best_rf_model.predict(X_test)
-    r2, rmse, mae = r2_score(y_test, y_pred), np.sqrt(mean_squared_error(y_test, y_pred)), mean_absolute_error(y_test, y_pred)
-    print(f"   - Final R-squared: {r2:.3f}\n   - Final RMSE: {rmse:.3f}\n   - Final MAE: {mae:.3f}")
-    importances = pd.Series(best_rf_model.feature_importances_, index=X.columns)
-    plt.figure(figsize=(8, 5))
-    importances.sort_values().plot(kind='barh')
-    plt.title(f'TUNED RF Feature Importance for {product_name}')
-    plt.tight_layout()
-    plot_filename = os.path.join(OUTPUT_DIR, f'{product_name}_tuned_rf_feature_importance.png')
-    plt.savefig(plot_filename)
-    plt.close()
-    print(f"   - Feature importance plot saved to {plot_filename}")
-    return y_test, y_pred
 
-def tune_and_run_xgboost(product_data, product_name):
-    print(f"\n--- Model 3: Tuned XGBoost Regressor (Predictive) ---")
+    print(f"   - Best parameters found: {grid_search.best_params_}")
+    print(f"   - Best cross-validated R-squared on training data: {grid_search.best_score_:.3f}")
+
+    best_rf_model = grid_search.best_estimator_
+    
+    if save_model:
+        save_model_joblib(best_rf_model, product_name, 'random_forest_model')
+        
+    return best_rf_model
+
+
+def tune_and_run_xgboost(product_data, product_name, save_model=False):
+    print(f"\n--- Model: Tuning XGBoost Regressor for {product_name} ---")
     features = ['Weekly_Avg_Price', 'Month', 'Week_of_Year', 'Quantity_Last_Week', 'Quantity_4_Week_MA', 'Is_Holiday_Season']
     X = product_data[features]
     y = product_data['Quantity']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    param_grid_xgb = {'n_estimators': [100, 200], 'max_depth': [3, 5, 7], 'learning_rate': [0.05, 0.1], 'subsample': [0.7, 1.0]}
+    X_train, y_train = X, y # Train on full data for final model
+
+    param_grid_xgb = {
+        'n_estimators': [100, 200],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.05, 0.1],
+        'subsample': [0.7, 1.0]
+    }
     xgbr = xgb.XGBRegressor(objective='reg:squarederror', random_state=42)
     grid_search_xgb = GridSearchCV(estimator=xgbr, param_grid=param_grid_xgb, cv=5, n_jobs=-1, verbose=0, scoring='r2')
     grid_search_xgb.fit(X_train, y_train)
+
     print(f"   - Best parameters found: {grid_search_xgb.best_params_}")
     best_xgb_model = grid_search_xgb.best_estimator_
-    y_pred = best_xgb_model.predict(X_test)
-    r2, rmse, mae = r2_score(y_test, y_pred), np.sqrt(mean_squared_error(y_test, y_pred)), mean_absolute_error(y_test, y_pred)
-    print(f"   - Final R-squared: {r2:.3f}\n   - Final RMSE: {rmse:.3f}\n   - Final MAE: {mae:.3f}")
-    importances = pd.Series(best_xgb_model.feature_importances_, index=X.columns)
-    plt.figure(figsize=(8, 5))
-    importances.sort_values().plot(kind='barh')
-    plt.title(f'TUNED XGBoost Feature Importance for {product_name}')
-    plt.tight_layout()
-    plot_filename = os.path.join(OUTPUT_DIR, f'{product_name}_tuned_xgb_feature_importance.png')
-    plt.savefig(plot_filename)
-    plt.close()
-    print(f"   - Feature importance plot saved to {plot_filename}")
-    return y_test, y_pred
+    
+    if save_model:
+        save_model_joblib(best_xgb_model, product_name, 'xgboost_model')
+
+    return best_xgb_model
+
 
 def plot_model_comparison(y_test, y_pred_rf, y_pred_xgb, product_name):
     plt.figure(figsize=(10, 8))
@@ -293,36 +320,51 @@ def plot_model_comparison(y_test, y_pred_rf, y_pred_xgb, product_name):
     plt.close()
     print(f"\n   - Comparative prediction plot saved to {plot_filename}")
 
+
 def static_price_optimization(ped, cost):
-    if ped is None or not isinstance(ped, (int, float)) or ped >= -1: return "Cannot optimize: Demand is inelastic or PED is not valid."
+    if ped is None or not isinstance(ped, (int, float)) or ped >= -1:
+        return "Cannot optimize: Demand is inelastic or PED is not valid."
     return cost / (1 + (1 / ped))
 
+
 def apply_psychological_pricing(price):
-    if isinstance(price, (int, float)) and price > 0: return int(price) + 0.99
+    if isinstance(price, (int, float)) and price > 0:
+        return int(price) + 0.99
     return price
 
-print("\n--- Starting Full Analysis Pipeline for Selected Products ---")
+
+print("\n--- Starting Final Model Training and Saving Pipeline ---")
+
+ped_results = {}
 
 for product in SELECTED_PRODUCTS:
-    print(f"\n{'='*60}\nAnalyzing Product: {product}\n{'='*60}")
+    print(f"\n{'='*60}\nProcessing Product: {product}\n{'='*60}")
     product_data = final_df[final_df['Description'] == product].copy()
     if product_data.empty:
         print(f"No data available for {product} after processing. Skipping.")
         continue
-    plot_eda(product_data, product)
-    plot_advanced_eda(product_data, product) # ADD THIS LINE
+    
+    # plot_eda(product_data, product)
+    # plot_advanced_eda(product_data, product)
+    # run_correlation_analysis(product_data, product)
 
-    run_correlation_analysis(product_data, product)
-    log_model = run_elasticity_model(product_data, product)
-    y_test_rf, y_pred_rf = tune_and_run_random_forest(product_data, product)
-    y_test_xgb, y_pred_xgb = tune_and_run_xgboost(product_data, product)
-    plot_model_comparison(y_test_rf, y_pred_rf, y_pred_xgb, product)
-    print("\n--- Price Optimization Recommendations (from Log-Log Model) ---")
+
+    # --- 1. Train and save the best predictive model (Random Forest) ---
+    tune_and_run_random_forest(product_data, product, save_model=SAVE_MODEL)
+    tune_and_run_xgboost(product_data, product, save_model=SAVE_MODEL)
+    
+    # --- 2. Run the explanatory model to get PED for strategic context ---
+    log_model = run_elasticity_model(product_data, product_name=product) # Not saving this one by default
     ped_value = log_model.params.get('log_Price', None)
-    cost_value = PRODUCT_COSTS.get(product, np.mean(product_data['Weekly_Avg_Price']) * 0.4)
-    optimal_price = static_price_optimization(ped_value, cost_value)
-    final_price = apply_psychological_pricing(optimal_price)
-    print(f"   - Static Optimal Price: £{optimal_price:.2f}" if isinstance(optimal_price, float) else f"   - {optimal_price}")
-    if isinstance(final_price, float): print(f"   - Recommended Price (Psychologically Adjusted): £{final_price:.2f}")
+    ped_results[product] = round(ped_value, 2) if ped_value is not None else "N/A"
+    print(f"   - Calculated PED for strategic context: {ped_results[product]}")
 
-print(f"\n{'='*60}\nFull Analysis Complete. All outputs saved to '{OUTPUT_DIR}'.\n{'='*60}")
+
+# Save the PED results to a file for the app to use
+ped_filename = os.path.join(MODEL_DIR, 'ped_results.joblib')
+joblib.dump(ped_results, ped_filename)
+print(f"\n{'='*60}\nStrategic PED values saved to: {ped_filename}")
+
+
+print(f"\n{'='*60}\nFull Training and Saving Process Complete. All models saved to '{MODEL_DIR}'.\n{'='*60}")
+
