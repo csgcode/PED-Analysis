@@ -1,0 +1,6 @@
+__pycache__/
+.DS_Store
+
+#ignore csv files
+.csv
+online_retail_II_kaggle.csv
