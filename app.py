@@ -10,7 +10,7 @@ from src.utils import load_all_models, load_ped_results
 # --- Page Configuration ---
 st.set_page_config(
     page_title="SME Price Optimization Tool",
-    page_icon="💡",
+    page_icon="📊",
     layout="wide"
 )
 
@@ -28,7 +28,7 @@ except FileNotFoundError:
 
 
 # --- App Header ---
-st.title(" pragmatic Price Optimization for E-commerce SMEs")
+st.title("Price Optimization for E-commerce SMEs")
 st.markdown("""
 This tool is a practical demonstration of the hybrid analytical framework developed in the MSc Data Science dissertation. 
 It combines predictive forecasting with strategic insights to help SMEs make data-driven pricing decisions.
