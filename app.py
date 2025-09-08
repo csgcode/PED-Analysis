@@ -27,7 +27,7 @@ except FileNotFoundError as e:
 
 
 # --- App Header ---
-st.title("Pragmatic Price Optimization for E-commerce SMEs")
+st.title("Price Optimization for E-commerce SMEs")
 st.markdown("""
 This tool is a practical demonstration of the hybrid analytical framework developed. 
 It combines predictive forecasting with strategic insights to help SMEs make data-driven pricing decisions.
