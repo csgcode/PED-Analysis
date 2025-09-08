@@ -9,15 +9,14 @@ SELECTED_PRODUCTS = [
     'JUMBO BAG RED RETROSPOT'
 ]
 
-@st.cache_data # Use Streamlit's caching to load models only once
+@st.cache_data
 def load_model(product_name):
     """Loads a single pre-trained model file from disk."""
     safe_name = "".join(c for c in product_name if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
     model_path = os.path.join(MODEL_DIR, f'random_forest_model_{safe_name}.joblib')
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found at {model_path}")
-    model = joblib.load(model_path)
-    return model
+    return joblib.load(model_path)
 
 @st.cache_data
 def load_all_models():
@@ -33,5 +32,21 @@ def load_ped_results():
     ped_path = os.path.join(MODEL_DIR, 'ped_results.joblib')
     if not os.path.exists(ped_path):
         raise FileNotFoundError(f"PED results file not found at {ped_path}")
-    ped_results = joblib.load(ped_path)
-    return ped_results
+    return joblib.load(ped_path)
+
+@st.cache_data
+def load_feature_means():
+    """Loads the saved feature means for app placeholders."""
+    means_path = os.path.join(MODEL_DIR, 'feature_means.joblib')
+    if not os.path.exists(means_path):
+        raise FileNotFoundError(f"Feature means file not found at {means_path}")
+    return joblib.load(means_path)
+
+@st.cache_data
+def load_price_stats():
+    """Loads the saved price stats for UI defaults."""
+    stats_path = os.path.join(MODEL_DIR, 'price_stats.joblib')
+    if not os.path.exists(stats_path):
+        raise FileNotFoundError(f"Price stats file not found at {stats_path}")
+    return joblib.load(stats_path)
+
